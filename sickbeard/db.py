@@ -18,7 +18,7 @@
 # You should have received a copy of the GNU General Public License
 # along with SickRage. If not, see <http://www.gnu.org/licenses/>.
 
-
+import warnings
 import os.path
 import re
 import sqlite3
@@ -100,19 +100,29 @@ class DBConnection(object):
         """
         try:
             if not args:
-                sqlResult = self.connection.cursor().execute(query)
+                sql_results = self.connection.cursor().execute(query)
             else:
-                sqlResult = self.connection.cursor().execute(query, args)
+                sql_results = self.connection.cursor().execute(query, args)
             if fetchall:
-                return sqlResult.fetchall()
+                return sql_results.fetchall()
             elif fetchone:
-                return sqlResult.fetchone()
+                return sql_results.fetchone()
             else:
-                return sqlResult
+                return sql_results
         except Exception:
             raise
 
     def checkDBVersion(self):
+        """
+        Fetch major database version
+
+        :return: Integer indicating current DB major version
+        """
+        if self.hasColumn('db_version', 'db_minor_version'):
+            warnings.warn('Deprecated: Use the version property', DeprecationWarning)
+        return self.check_db_major_version()
+
+    def check_db_major_version(self):
         """
         Fetch database version
 
@@ -131,6 +141,33 @@ class DBConnection(object):
         else:
             return 0
 
+    def check_db_minor_version(self):
+        """
+        Fetch database version
+
+        :return: Integer inidicating current DB major version
+        """
+        result = None
+
+        try:
+            if self.hasColumn('db_version', 'db_minor_version'):
+                result = self.select("SELECT db_minor_version FROM db_version")
+        except:
+            return 0
+
+        if result:
+            return int(result[0]["db_minor_version"])
+        else:
+            return 0
+
+    @property
+    def version(self):
+        """The database version
+
+        :return: A tuple containing the major and minor versions
+        """
+        return self.check_db_major_version(), self.check_db_minor_version()
+
     def mass_action(self, querylist=[], logTransaction=False, fetchall=False):
         """
         Execute multiple queries
@@ -143,7 +180,7 @@ class DBConnection(object):
         # remove None types
         querylist = [i for i in querylist if i is not None and len(i)]
 
-        sqlResult = []
+        sql_results = []
         attempt = 0
 
         with db_locks[self.filename]:
@@ -154,18 +191,18 @@ class DBConnection(object):
                         if len(qu) == 1:
                             if logTransaction:
                                 logger.log(qu[0], logger.DEBUG)
-                            sqlResult.append(self._execute(qu[0], fetchall=fetchall))
+                            sql_results.append(self._execute(qu[0], fetchall=fetchall))
                         elif len(qu) > 1:
                             if logTransaction:
                                 logger.log(qu[0] + " with args " + str(qu[1]), logger.DEBUG)
-                            sqlResult.append(self._execute(qu[0], qu[1], fetchall=fetchall))
+                            sql_results.append(self._execute(qu[0], qu[1], fetchall=fetchall))
                     self.connection.commit()
                     logger.log(u"Transaction with " + str(len(querylist)) + u" queries executed", logger.DEBUG)
 
                     # finished
                     break
                 except sqlite3.OperationalError as e:
-                    sqlResult = []
+                    sql_results = []
                     if self.connection:
                         self.connection.rollback()
                     if "unable to open database file" in e.args[0] or "database is locked" in e.args[0]:
@@ -176,7 +213,7 @@ class DBConnection(object):
                         logger.log(u"DB error: " + ex(e), logger.ERROR)
                         raise
                 except sqlite3.DatabaseError as e:
-                    sqlResult = []
+                    sql_results = []
                     if self.connection:
                         self.connection.rollback()
                     logger.log(u"Fatal error executing query: " + ex(e), logger.ERROR)
@@ -184,7 +221,7 @@ class DBConnection(object):
 
             # time.sleep(0.02)
 
-            return sqlResult
+            return sql_results
 
     def action(self, query, args=None, fetchall=False, fetchone=False):
         """
@@ -199,7 +236,7 @@ class DBConnection(object):
         if query is None:
             return
 
-        sqlResult = None
+        sql_results = None
         attempt = 0
 
         with db_locks[self.filename]:
@@ -211,7 +248,7 @@ class DBConnection(object):
                     else:
                         logger.log(self.filename + ": " + query + " with args " + str(args), logger.DB)
 
-                    sqlResult = self._execute(query, args, fetchall=fetchall, fetchone=fetchone)
+                    sql_results = self._execute(query, args, fetchall=fetchall, fetchone=fetchone)
                     self.connection.commit()
 
                     # get out of the connection attempt loop since we were successful
@@ -230,7 +267,7 @@ class DBConnection(object):
 
             # time.sleep(0.02)
 
-            return sqlResult
+            return sql_results
 
     def select(self, query, args=None):
         """
@@ -241,12 +278,12 @@ class DBConnection(object):
         :return: query results
         """
 
-        sqlResults = self.action(query, args, fetchall=True)
+        sql_results = self.action(query, args, fetchall=True)
 
-        if sqlResults is None:
+        if sql_results is None:
             return []
 
-        return sqlResults
+        return sql_results
 
     def selectOne(self, query, args=None):
         """
@@ -256,12 +293,12 @@ class DBConnection(object):
         :param args: arguments to query string
         :return: query results
         """
-        sqlResults = self.action(query, args, fetchone=True)
+        sql_results = self.action(query, args, fetchone=True)
 
-        if sqlResults is None:
+        if sql_results is None:
             return []
 
-        return sqlResults
+        return sql_results
 
     def upsert(self, tableName, valueDict, keyDict):
         """
@@ -294,9 +331,9 @@ class DBConnection(object):
         :param tableName: name of table
         :return: array of name/type info
         """
-        sqlResult = self.select("PRAGMA table_info(`%s`)" % tableName)
+        sql_results = self.select("PRAGMA table_info(`%s`)" % tableName)
         columns = {}
-        for column in sqlResult:
+        for column in sql_results:
             columns[column['name']] = {'type': column['type']}
         return columns
 
